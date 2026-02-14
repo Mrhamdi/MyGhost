@@ -25,13 +25,6 @@ function AppContent() {
   const [callDuration, setCallDuration] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // HotLine service state
-  const [service, setService] = useState('randomic'); // 'randomic' | 'hotline'
-  const [userCountry, setUserCountry] = useState('');
-  const [partnerCountry, setPartnerCountry] = useState('');
-  const [targetCountry, setTargetCountry] = useState('');
-  const [excludeCountry, setExcludeCountry] = useState('');
-
   // Load auto-reconnect preference from localStorage
   const [autoReconnect, setAutoReconnect] = useState(() => {
     const saved = localStorage.getItem('autoReconnect');
@@ -57,36 +50,11 @@ function AppContent() {
   const stepRef = useRef(step);
   const statusRef = useRef(status);
   const callRetriedRef = useRef(false);
-  const serviceRef = useRef(service);
-  const userCountryRef = useRef(userCountry);
-  const targetCountryRef = useRef(targetCountry);
-  const excludeCountryRef = useRef(excludeCountry);
 
   // Keep refs in sync with state
   useEffect(() => { autoReconnectRef.current = autoReconnect; }, [autoReconnect]);
   useEffect(() => { stepRef.current = step; }, [step]);
   useEffect(() => { statusRef.current = status; }, [status]);
-  useEffect(() => { serviceRef.current = service; }, [service]);
-  useEffect(() => { userCountryRef.current = userCountry; }, [userCountry]);
-  useEffect(() => { targetCountryRef.current = targetCountry; }, [targetCountry]);
-  useEffect(() => { excludeCountryRef.current = excludeCountry; }, [excludeCountry]);
-
-  // Detect user country on mount — use "Localhost" when running locally for testing
-  useEffect(() => {
-    const host = window.location.hostname;
-    if (host === 'localhost' || host === '127.0.0.1') {
-      setUserCountry('Localhost');
-      return;
-    }
-    fetch('https://ipapi.co/json/')
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.country_name) {
-          setUserCountry(data.country_name);
-        }
-      })
-      .catch(() => { /* silently fallback to empty */ });
-  }, []);
 
   // Apply theme on mount and when theme changes
   useEffect(() => {
@@ -120,42 +88,6 @@ function AppContent() {
       socketRef.current.emit('find_partner', peerRef.current.id);
     } catch (err) {
       setTimeout(() => emitFindPartner(tries + 1), WAIT_MS);
-    }
-  };
-
-  // Emit find_hotline_partner with country filters
-  const emitFindHotlinePartner = (tries = 0) => {
-    const MAX_TRIES = 12;
-    const WAIT_MS = 250;
-    if (!socketRef.current) return;
-    if (tries > MAX_TRIES) return;
-
-    const peerReady = !!(peerOpenRef.current && peerRef.current && peerRef.current.id);
-    const haveStream = !!localStreamRef.current;
-
-    if (!peerReady || !haveStream) {
-      setTimeout(() => emitFindHotlinePartner(tries + 1), WAIT_MS);
-      return;
-    }
-
-    try {
-      socketRef.current.emit('find_hotline_partner', {
-        peerId: peerRef.current.id,
-        country: userCountryRef.current,
-        targetCountry: targetCountryRef.current,
-        excludeCountry: excludeCountryRef.current
-      });
-    } catch (err) {
-      setTimeout(() => emitFindHotlinePartner(tries + 1), WAIT_MS);
-    }
-  };
-
-  // Helper: emit the right find event based on current service
-  const emitFindForService = () => {
-    if (serviceRef.current === 'hotline') {
-      emitFindHotlinePartner();
-    } else {
-      emitFindPartner();
     }
   };
 
@@ -228,14 +160,12 @@ function AppContent() {
       }, 150);
     };
 
-    socketRef.current.on('match_found', ({ partnerId, initiator, partnerCountry: pc }) => {
+    socketRef.current.on('match_found', ({ partnerId, initiator }) => {
       // Keep UI in 'searching' state and wait for remote stream before marking connected
       setStatus('searching');
       setMessages([]);
       setCallDuration(0);
       setUnreadCount(0);
-      if (pc) setPartnerCountry(pc);
-      else setPartnerCountry('');
 
 
 
@@ -338,7 +268,7 @@ function AppContent() {
           navigator.mediaDevices.getUserMedia({ audio: true })
             .then((stream) => {
               localStreamRef.current = stream;
-              emitFindForService();
+              emitFindPartner();
             })
             .catch((err) => { setStatus('idle'); });
         }, 1500);
@@ -495,27 +425,19 @@ function AppContent() {
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
-        emitFindForService();
+        emitFindPartner();
       })
       .catch((err) => { setStatus('idle'); });
   };
 
-  const startSearch = (selectedService) => {
-    const svc = selectedService || 'randomic';
-    setService(svc);
-    serviceRef.current = svc;
+  const startSearch = () => {
     setStep('chat');
     setStatus('searching');
-    setPartnerCountry('');
 
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
-        if (svc === 'hotline') {
-          emitFindHotlinePartner();
-        } else {
-          emitFindPartner();
-        }
+        emitFindPartner();
       })
       .catch((err) => { showNotification('Microphone access is required!'); setStep('landing'); });
   };
@@ -615,16 +537,14 @@ function AppContent() {
     setMessages([]);
     setCallDuration(0);
     setUnreadCount(0);
-    setPartnerCountry('');
   };
 
   const handleStartCall = () => {
     setStatus('searching');
-    setPartnerCountry('');
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
-        emitFindForService();
+        emitFindPartner();
       })
       .catch((err) => { showNotification('Microphone access is required!'); setStatus('idle'); });
   };
@@ -643,7 +563,6 @@ function AppContent() {
     setMessages([]);
     setCallDuration(0);
     setUnreadCount(0);
-    setPartnerCountry('');
   };
 
   const toggleAutoReconnect = () => {
@@ -672,17 +591,17 @@ function AppContent() {
     // Notify server to disconnect partner
     socketRef.current.emit('disconnect_call');
 
+    // Clear messages and reset state
     setMessages([]);
     setCallDuration(0);
     setUnreadCount(0);
     setStatus('searching');
-    setPartnerCountry('');
 
     // Immediately search for new partner
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
-        emitFindForService();
+        emitFindPartner();
       })
       .catch((err) => { showNotification('Microphone access is required!'); setStatus('idle'); });
   };
@@ -699,17 +618,7 @@ function AppContent() {
       <Routes>
         <Route path="/" element={
           step === 'landing' ? (
-            <Landing
-              onStart={startSearch}
-              onlineUsers={onlineUsers}
-              theme={theme}
-              onToggleTheme={toggleTheme}
-              userCountry={userCountry}
-              targetCountry={targetCountry}
-              setTargetCountry={setTargetCountry}
-              excludeCountry={excludeCountry}
-              setExcludeCountry={setExcludeCountry}
-            />
+            <Landing onStart={startSearch} onlineUsers={onlineUsers} theme={theme} onToggleTheme={toggleTheme} />
           ) : (
             <VoiceChat
               status={status}
@@ -727,8 +636,6 @@ function AppContent() {
               onChatOpen={handleChatOpen}
               onlineUsers={onlineUsers}
               onSkip={handleSkip}
-              service={service}
-              partnerCountry={partnerCountry}
             />
           )
         } />
