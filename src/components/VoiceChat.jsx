@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Mic, MicOff, PhoneOff, Loader, Send, MessageCircle, X, Home, SkipForward } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Loader, Send, MessageCircle, X, Home, SkipForward, Globe } from 'lucide-react';
+import { getCountryFlag } from '../data/countries';
 
 const VoiceChat = ({
     status,
@@ -16,7 +17,9 @@ const VoiceChat = ({
     unreadCount,
     onChatOpen,
     onlineUsers,
-    onSkip
+    onSkip,
+    service,
+    partnerCountry
 }) => {
     const [messageText, setMessageText] = useState('');
     const [showAnimation, setShowAnimation] = useState(false);
@@ -210,6 +213,12 @@ const VoiceChat = ({
                         ))}
                     </div>
                     <p>Connected with Stranger</p>
+                    {service === 'hotline' && partnerCountry && (
+                        <div className="partner-country-badge">
+                            <span className="partner-flag">{getCountryFlag(partnerCountry)}</span>
+                            <span>{partnerCountry}</span>
+                        </div>
+                    )}
                     {callDuration > 0 && (
                         <div className="timer">{formatTime(callDuration)}</div>
                     )}

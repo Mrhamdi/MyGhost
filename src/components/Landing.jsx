@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, Info, FileText, Shield, Lock, Database, Eye, MessageCircle, Sun, Moon } from 'lucide-react';
+import { Users, Lock, Database, Eye, MessageCircle, Sun, Moon, Globe, ChevronLeft, Flame } from 'lucide-react';
+import COUNTRIES, { getCountryFlag } from '../data/countries';
 
-
-const Landing = ({ onStart, onlineUsers, theme, onToggleTheme }) => {
+const Landing = ({ onStart, onlineUsers, theme, onToggleTheme, userCountry, targetCountry, setTargetCountry, excludeCountry, setExcludeCountry }) => {
     const [activeSection, setActiveSection] = useState(null);
+    const [selectedService, setSelectedService] = useState('randomic');
+    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const features = [
         {
@@ -31,16 +33,103 @@ const Landing = ({ onStart, onlineUsers, theme, onToggleTheme }) => {
         setActiveSection(activeSection === key ? null : key);
     };
 
+    const toggleService = () => {
+        if (selectedService === 'randomic') {
+            setSelectedService('hotline');
+            setSidebarOpen(true);
+        } else {
+            setSelectedService('randomic');
+            setSidebarOpen(false);
+        }
+    };
+
+    const handleStartChat = () => {
+        onStart(selectedService);
+    };
+
     return (
         <main className="ghost-landing">
             <div className="ghost-bg-particles" />
+
+            {/* HotLine Left Sidebar */}
+            <div className={`hotline-sidebar ${sidebarOpen ? 'open' : ''}`}>
+                <div className="sidebar-header">
+                    <Globe size={20} />
+                    <h3>HotLine Filters</h3>
+                    <button className="sidebar-close" onClick={() => setSidebarOpen(false)}>
+                        <ChevronLeft size={20} />
+                    </button>
+                </div>
+
+                <div className="sidebar-content">
+                    <div className="sidebar-section">
+                        <div className="sidebar-country-display">
+                            <span className="sidebar-label">Your Country</span>
+                            <span className="sidebar-value">{getCountryFlag(userCountry)} {userCountry || 'Detecting...'}</span>
+                        </div>
+                    </div>
+
+                    <div className="sidebar-section">
+                        <label className="sidebar-label">Preferred Country</label>
+                        <select
+                            className="sidebar-select"
+                            value={targetCountry}
+                            onChange={(e) => setTargetCountry(e.target.value)}
+                        >
+                            <option value="">🌍 Any Country</option>
+                            {COUNTRIES.map(c => (
+                                <option key={c.code} value={c.name}>{c.flag} {c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="sidebar-section">
+                        <label className="sidebar-label">Not Preferred</label>
+                        <select
+                            className="sidebar-select"
+                            value={excludeCountry}
+                            onChange={(e) => setExcludeCountry(e.target.value)}
+                        >
+                            <option value="">None</option>
+                            {COUNTRIES.map(c => (
+                                <option key={c.code} value={c.name}>{c.flag} {c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
+            {selectedService === 'hotline' && !sidebarOpen && (
+                <button className="sidebar-tab" onClick={() => setSidebarOpen(true)}>
+                    <Globe size={16} />
+                    <span>Filters</span>
+                </button>
+            )}
 
             <header className="ghost-header">
                 <div className="ghost-logo-container">
                     <img src="/logo.svg" alt="Randomic Logo" className="ghost-logo-icon" width={40} height={40} />
                     <h1 className="ghost-title">Randomic</h1>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <button
+                        className={`hotline-toggle-btn ${selectedService === 'hotline' ? 'active' : ''}`}
+                        onClick={toggleService}
+                        title={selectedService === 'hotline' ? 'Switch to Randomic' : 'Switch to HotLine'}
+                    >
+                        <Flame size={18} className="flame-icon" />
+                        <span>HotLine</span>
+                        <div className="fire-particles">
+                            <span className="fire-particle"></span>
+                            <span className="fire-particle"></span>
+                            <span className="fire-particle"></span>
+                            <span className="fire-particle"></span>
+                            <span className="fire-particle"></span>
+                        </div>
+                    </button>
+
                     <button
                         className="theme-toggle-btn"
                         onClick={onToggleTheme}
@@ -55,7 +144,6 @@ const Landing = ({ onStart, onlineUsers, theme, onToggleTheme }) => {
                 </div>
             </header>
 
-            {/* Hero Banner - Add your image here */}
             <section className="hero-banner">
                 <div className="banner-container">
                     <img
@@ -72,10 +160,28 @@ const Landing = ({ onStart, onlineUsers, theme, onToggleTheme }) => {
 
             <section className="ghost-hero">
                 <p className="ghost-tagline">Speak Freely, Vanish Completely</p>
+
+                <div className={`mode-indicator ${selectedService}`}>
+                    {selectedService === 'hotline' ? (
+                        <>
+                            <Flame size={18} />
+                            <span>HotLine Mode — Match by country</span>
+                        </>
+                    ) : (
+                        <>
+                            <MessageCircle size={18} />
+                            <span>Randomic Mode — Chat with anyone</span>
+                        </>
+                    )}
+                </div>
+
                 <div className="ghost-cta-wrapper">
-                    <button className="ghost-start-btn" onClick={onStart}>
-                        <MessageCircle size={24} />
-                        <span>Start Chat</span>
+                    <button
+                        className={`ghost-start-btn ${selectedService === 'hotline' ? 'hotline-start' : ''}`}
+                        onClick={handleStartChat}
+                    >
+                        {selectedService === 'hotline' ? <Flame size={24} /> : <MessageCircle size={24} />}
+                        <span>{selectedService === 'hotline' ? 'Start HotLine' : 'Start Chat'}</span>
                     </button>
                 </div>
             </section>
