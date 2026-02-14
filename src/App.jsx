@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import Peer from 'peerjs';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -44,12 +44,14 @@ function AppContent() {
   const timerRef = useRef(null);
   const callRef = useRef(null);
   const peerOpenRef = useRef(false);
+  const streamTimeoutRef = useRef(null);
 
   // Refs to read mutable state inside stable callbacks without re-creating socket/peer
   const autoReconnectRef = useRef(autoReconnect);
   const stepRef = useRef(step);
   const statusRef = useRef(status);
   const callRetriedRef = useRef(false);
+  const isSearchingRef = useRef(false); // guard against double-searching
 
   // Keep refs in sync with state
   useEffect(() => { autoReconnectRef.current = autoReconnect; }, [autoReconnect]);
@@ -65,19 +67,88 @@ function AppContent() {
   const toggleTheme = () => {
     setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
   };
-  const streamTimeoutRef = useRef(null);
+
+  // ──────────── HELPERS ────────────
+
+  const showNotification = (message) => {
+    setNotification(message);
+  };
+
+  const clearStreamTimeout = () => {
+    if (streamTimeoutRef.current) {
+      clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = null;
+    }
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const stopRemoteAudio = () => {
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.pause();
+      if (remoteAudioRef.current.srcObject) {
+        remoteAudioRef.current.srcObject.getTracks().forEach(t => t.stop());
+      }
+      remoteAudioRef.current.srcObject = null;
+    }
+  };
+
+  const stopLocalStream = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+  };
+
+  const closeCall = () => {
+    clearStreamTimeout();
+    try {
+      if (callRef.current && typeof callRef.current.close === 'function') {
+        callRef.current.close();
+      }
+    } catch (e) { }
+    callRef.current = null;
+    callRetriedRef.current = false;
+  };
+
+  // Full cleanup of everything call-related
+  const fullCleanup = () => {
+    stopTimer();
+    closeCall();
+    stopRemoteAudio();
+    stopLocalStream();
+  };
+
+  // Reset all call state
+  const resetCallState = () => {
+    setMessages([]);
+    setCallDuration(0);
+    setUnreadCount(0);
+    setIsMuted(false);
+  };
+
+  // ──────────── CORE CONNECTION LOGIC ────────────
 
   // Emit find_partner only when PeerJS is open and local stream is ready
   const emitFindPartner = (tries = 0) => {
     const MAX_TRIES = 12;
     const WAIT_MS = 250;
-    if (!socketRef.current) return;
+    if (!socketRef.current || !socketRef.current.connected) return;
     if (tries > MAX_TRIES) {
+      console.log('emitFindPartner: max retries exceeded, giving up');
+      showNotification('Connection failed. Please try again.');
+      setStatus('idle');
+      isSearchingRef.current = false;
       return;
     }
 
     const peerReady = !!(peerOpenRef.current && peerRef.current && peerRef.current.id);
-    const haveStream = !!localStreamRef.current;
+    const haveStream = !!(localStreamRef.current && localStreamRef.current.active);
 
     if (!peerReady || !haveStream) {
       setTimeout(() => emitFindPartner(tries + 1), WAIT_MS);
@@ -90,6 +161,96 @@ function AppContent() {
       setTimeout(() => emitFindPartner(tries + 1), WAIT_MS);
     }
   };
+
+  // Called when we actually receive a remote stream — mark connected and start timer
+  const establishConnection = () => {
+    if (statusRef.current === 'connected') return;
+    callRetriedRef.current = false;
+    isSearchingRef.current = false;
+    setStatus('connected');
+    resetCallState();
+    stopTimer();
+    timerRef.current = setInterval(() => {
+      setCallDuration(prev => prev + 1);
+    }, 1000);
+  };
+
+  const abortAndSearch = () => {
+    closeCall();
+    stopRemoteAudio();
+    stopLocalStream();
+
+    // Notify server to disconnect partner (best-effort)
+    try { socketRef.current?.emit('disconnect_call'); } catch (e) { }
+
+    // Immediately start searching again silently
+    setStatus('searching');
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        localStreamRef.current = stream;
+        emitFindPartner();
+      })
+      .catch((err) => {
+        console.log('Failed to get mic for re-search:', err);
+        setStatus('idle');
+        isSearchingRef.current = false;
+      });
+  };
+
+  const callUser = (partnerId) => {
+    if (!peerRef.current || !localStreamRef.current) {
+      console.log('callUser: peer or stream not ready');
+      return;
+    }
+
+    const call = peerRef.current.call(partnerId, localStreamRef.current);
+    if (!call) {
+      console.log('callUser: peerRef.call returned null');
+      abortAndSearch();
+      return;
+    }
+
+    callRef.current = call;
+    // Start timeout waiting for remote stream — retry once before aborting
+    clearStreamTimeout();
+    streamTimeoutRef.current = setTimeout(() => {
+      if (!callRetriedRef.current && peerRef.current && localStreamRef.current) {
+        callRetriedRef.current = true;
+        console.log('First call attempt timed out, retrying...');
+        try { call.close(); } catch (e) { }
+        callUser(partnerId);
+      } else {
+        abortAndSearch();
+      }
+    }, 5000);
+
+    call.on('stream', (remoteStream) => {
+      clearStreamTimeout();
+      if (remoteAudioRef.current) {
+        stopRemoteAudio();
+        remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.autoplay = true;
+        remoteAudioRef.current.muted = false;
+        remoteAudioRef.current.volume = 1;
+        const playPromise = remoteAudioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => { });
+        }
+        establishConnection();
+      }
+    });
+
+    call.on('error', (err) => {
+      console.log('Outgoing call error:', err);
+    });
+
+    call.on('close', () => {
+      clearStreamTimeout();
+      stopRemoteAudio();
+    });
+  };
+
+  // ──────────── EFFECTS ────────────
 
   // Initialize audio element on mount
   useEffect(() => {
@@ -104,7 +265,6 @@ function AppContent() {
     }
 
     return () => {
-      // Cleanup audio on unmount
       if (remoteAudioRef.current) {
         remoteAudioRef.current.pause();
         remoteAudioRef.current.srcObject = null;
@@ -112,15 +272,24 @@ function AppContent() {
     };
   }, []);
 
-  // MOUNT-ONLY: initialize socket + PeerJS once, never tear down on state changes
+  // MOUNT-ONLY: initialize socket + PeerJS once
   useEffect(() => {
     // Initialize Socket
     socketRef.current = io(SOCKET_URL);
 
     socketRef.current.on('connect', () => {
+      console.log('Socket connected:', socketRef.current.id);
     });
 
-    // Explicitly disconnect on page refresh/close so server count updates instantly
+    // Handle socket reconnect — if user was searching, re-emit find_partner
+    socketRef.current.on('reconnect', () => {
+      console.log('Socket reconnected');
+      if (statusRef.current === 'searching' && isSearchingRef.current) {
+        emitFindPartner();
+      }
+    });
+
+    // Explicitly disconnect on page refresh/close
     const handleBeforeUnload = () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -138,14 +307,15 @@ function AppContent() {
       const WAIT_MS = 300;
       if (!partnerId) return;
       if (tries > MAX_TRIES) {
+        console.log('attemptCall: max retries, aborting');
+        abortAndSearch();
         return;
       }
 
       const peerReady = peerRef.current && peerRef.current.id;
-      const haveStream = !!localStreamRef.current;
+      const haveStream = !!(localStreamRef.current && localStreamRef.current.active);
 
       if (!peerReady || !haveStream) {
-        // Retry after a short wait
         setTimeout(() => attemptCall(partnerId, tries + 1), WAIT_MS);
         return;
       }
@@ -163,22 +333,19 @@ function AppContent() {
     socketRef.current.on('match_found', ({ partnerId, initiator }) => {
       // Keep UI in 'searching' state and wait for remote stream before marking connected
       setStatus('searching');
-      setMessages([]);
-      setCallDuration(0);
-      setUnreadCount(0);
-
-
+      resetCallState();
 
       // Notify server when we're ready (have local stream and peer open)
       const sendReady = (tries = 0) => {
         const MAX_TRIES = 12;
         const WAIT_MS = 250;
         if (tries > MAX_TRIES) {
+          console.log('sendReady: max retries exceeded');
           return;
         }
 
         const peerReady = !!(peerOpenRef.current && peerRef.current && peerRef.current.id);
-        const haveStream = !!localStreamRef.current;
+        const haveStream = !!(localStreamRef.current && localStreamRef.current.active);
 
         if (!peerReady || !haveStream) {
           setTimeout(() => sendReady(tries + 1), WAIT_MS);
@@ -189,8 +356,6 @@ function AppContent() {
       };
 
       sendReady();
-
-      // Server will instruct initiator to start via 'start_call'
     });
 
     socketRef.current.on('start_call', ({ partnerId }) => {
@@ -198,85 +363,62 @@ function AppContent() {
     });
 
     socketRef.current.on('preflight', ({ partnerId }) => {
-      // Perform lightweight data connection to warm up signaling/ICE
       const doPreflight = () => {
         try {
           if (!peerRef.current) { socketRef.current.emit('preflight_done'); return; }
 
+          let preflightEmitted = false;
+          const emitOnce = () => {
+            if (preflightEmitted) return;
+            preflightEmitted = true;
+            try { socketRef.current.emit('preflight_done'); } catch (e) { }
+          };
+
           const conn = peerRef.current.connect(partnerId, { reliable: true });
           conn.on('open', () => {
-            try {
-              conn.send({ type: 'preflight', ts: Date.now() });
-            } catch (e) { }
-            // close after a short delay
+            try { conn.send({ type: 'preflight', ts: Date.now() }); } catch (e) { }
             setTimeout(() => {
               try { conn.close(); } catch (e) { }
-              try { socketRef.current.emit('preflight_done'); } catch (e) { }
+              emitOnce();
             }, 200);
           });
-          conn.on('error', (err) => { try { socketRef.current.emit('preflight_done'); } catch (e) { } });
-          // if connection object already open immediately, emit done
-          setTimeout(() => {
-            if (conn.open) {
-              try { socketRef.current.emit('preflight_done'); } catch (e) { }
-            }
-          }, 500);
+          conn.on('error', () => { emitOnce(); });
+
+          // Fallback timeout
+          setTimeout(() => { emitOnce(); }, 1000);
         } catch (e) {
           try { socketRef.current.emit('preflight_done'); } catch (er) { }
         }
       };
 
-      // run preflight after small delay to avoid races
       setTimeout(doPreflight, 50);
     });
 
-    // Log socket events for debugging
     socketRef.current.on('peer_not_ready', () => { });
 
     socketRef.current.on('partner_disconnected', () => {
       showNotification('Stranger disconnected');
+      fullCleanup();
 
-      // Stop timer
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-
-      // Close existing call
-      try {
-        if (callRef.current && typeof callRef.current.close === 'function') {
-          callRef.current.close();
-        }
-      } catch (e) { }
-      callRef.current = null;
-      callRetriedRef.current = false;
-
-      // Stop local stream
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-        localStreamRef.current = null;
-      }
-
-      // Use refs for latest state (this effect is mount-only)
       if (autoReconnectRef.current && stepRef.current === 'chat') {
+        resetCallState();
         setTimeout(() => {
-          setMessages([]);
-          setCallDuration(0);
-          setUnreadCount(0);
           setStatus('searching');
-          // Get new stream before searching
+          isSearchingRef.current = true;
           navigator.mediaDevices.getUserMedia({ audio: true })
             .then((stream) => {
               localStreamRef.current = stream;
               emitFindPartner();
             })
-            .catch((err) => { setStatus('idle'); });
+            .catch((err) => {
+              setStatus('idle');
+              isSearchingRef.current = false;
+            });
         }, 1500);
       } else {
         setStatus('idle');
-        setMessages([]);
-        setCallDuration(0);
-        setUnreadCount(0);
+        resetCallState();
+        isSearchingRef.current = false;
       }
     });
 
@@ -286,283 +428,200 @@ function AppContent() {
     });
 
     // Initialize PeerJS (Production)
-    peerRef.current = new Peer(undefined, {
-      host: 'server-tt1f.onrender.com', // or your actual Render domain
-      port: 443,
-      path: '/peerjs/myapp',
-      secure: true
-    });
+    const createPeer = () => {
+      const peer = new Peer(undefined, {
+        host: 'server-tt1f.onrender.com',
+        port: 443,
+        path: '/peerjs/myapp',
+        secure: true
+      });
 
-    peerRef.current.on('open', (id) => {
-      peerOpenRef.current = true;
-    });
+      peer.on('open', (id) => {
+        peerOpenRef.current = true;
+        console.log('PeerJS open with id:', id);
+      });
 
-    peerRef.current.on('call', (call) => {
-      callRef.current = call;
-      callRetriedRef.current = false;
+      peer.on('call', (call) => {
+        callRef.current = call;
+        callRetriedRef.current = false;
 
-      // Reuse existing stream if available, otherwise request a new one
-      const answerWithStream = (stream) => {
-        localStreamRef.current = stream;
-        call.answer(stream);
-        // Start timeout waiting for remote stream
-        clearStreamTimeout();
-        streamTimeoutRef.current = setTimeout(() => {
-          abortAndSearch();
-        }, 5000);
-
-        call.on('stream', (remoteStream) => {
-
-          // remote stream arrived — clear any pending abort timer
+        const answerWithStream = (stream) => {
+          localStreamRef.current = stream;
+          call.answer(stream);
           clearStreamTimeout();
-          if (remoteAudioRef.current) {
-            // Stop previous stream if any
-            if (remoteAudioRef.current.srcObject) {
-              remoteAudioRef.current.srcObject.getTracks().forEach(track => track.stop());
+          streamTimeoutRef.current = setTimeout(() => {
+            abortAndSearch();
+          }, 5000);
+
+          call.on('stream', (remoteStream) => {
+            clearStreamTimeout();
+            if (remoteAudioRef.current) {
+              stopRemoteAudio();
+              remoteAudioRef.current.srcObject = remoteStream;
+              remoteAudioRef.current.autoplay = true;
+              remoteAudioRef.current.muted = false;
+              remoteAudioRef.current.volume = 1;
+              const playPromise = remoteAudioRef.current.play();
+              if (playPromise !== undefined) {
+                playPromise.catch(() => { });
+              }
+              establishConnection();
             }
-
-            remoteAudioRef.current.srcObject = remoteStream;
-
-            // Ensure autoplay properties are set
-            remoteAudioRef.current.autoplay = true;
-            remoteAudioRef.current.muted = false;
-            remoteAudioRef.current.volume = 1;
-
-            // Play with error handling
-            const playPromise = remoteAudioRef.current.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(() => { });
-            }
-            // Mark connection established when remote stream arrives
-            establishConnection();
-          }
-        });
-
-        call.on('error', (err) => {
-          console.log('Incoming call error:', err);
-        });
-
-        call.on('close', () => {
-          clearStreamTimeout();
-          if (remoteAudioRef.current) {
-            remoteAudioRef.current.pause();
-            remoteAudioRef.current.srcObject = null;
-          }
-        });
-      };
-
-      if (localStreamRef.current && localStreamRef.current.active) {
-        answerWithStream(localStreamRef.current);
-      } else {
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(answerWithStream)
-          .catch((err) => {
-            console.log('Failed to get microphone for incoming call:', err);
           });
-      }
-    });
+
+          call.on('error', (err) => {
+            console.log('Incoming call error:', err);
+          });
+
+          call.on('close', () => {
+            clearStreamTimeout();
+            stopRemoteAudio();
+          });
+        };
+
+        if (localStreamRef.current && localStreamRef.current.active) {
+          answerWithStream(localStreamRef.current);
+        } else {
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(answerWithStream)
+            .catch((err) => {
+              console.log('Failed to get microphone for incoming call:', err);
+            });
+        }
+      });
+
+      // PeerJS disconnected from signaling server — reconnect it
+      peer.on('disconnected', () => {
+        console.log('PeerJS disconnected from server, reconnecting...');
+        peerOpenRef.current = false;
+        try { peer.reconnect(); } catch (e) {
+          console.log('PeerJS reconnect failed, creating new peer');
+          peerRef.current = createPeer();
+        }
+      });
+
+      peer.on('error', (err) => {
+        console.log('PeerJS error:', err.type, err.message);
+        // Fatal errors: create a new peer
+        if (err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+          peerOpenRef.current = false;
+          try { peer.destroy(); } catch (e) { }
+          setTimeout(() => {
+            peerRef.current = createPeer();
+          }, 1000);
+        }
+      });
+
+      peer.on('close', () => {
+        peerOpenRef.current = false;
+        console.log('PeerJS closed');
+      });
+
+      return peer;
+    };
+
+    peerRef.current = createPeer();
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      socketRef.current.disconnect();
-      peerRef.current.destroy();
+      stopTimer();
+      clearStreamTimeout();
+      if (socketRef.current) socketRef.current.disconnect();
+      if (peerRef.current) peerRef.current.destroy();
     };
-  }, []);  // mount-only — refs are used for mutable state
+  }, []);  // mount-only
 
-  const showNotification = (message) => {
-    setNotification(message);
-  };
-
-  // Called when we actually receive a remote stream — mark connected and start timer
-  const establishConnection = () => {
-    if (statusRef.current === 'connected') return;
-    callRetriedRef.current = false;
-    setStatus('connected');
-    setMessages([]);
-    setUnreadCount(0);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    timerRef.current = setInterval(() => {
-      setCallDuration(prev => prev + 1);
-    }, 1000);
-  };
-
-  const clearStreamTimeout = () => {
-    if (streamTimeoutRef.current) {
-      clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = null;
-    }
-  };
-
-  const abortAndSearch = () => {
-    clearStreamTimeout();
-
-    // Close call if exists
-    try {
-      if (callRef.current && typeof callRef.current.close === 'function') {
-        callRef.current.close();
-      }
-    } catch (e) { }
-    callRef.current = null;
-
-    // Stop local stream
-    try {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
-        localStreamRef.current = null;
-      }
-    } catch (e) { }
-
-    // Notify server to disconnect partner (best-effort)
-    try { socketRef.current?.emit('disconnect_call'); } catch (e) { }
-
-    // Immediately start searching again silently
-    setStatus('searching');
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        localStreamRef.current = stream;
-        emitFindPartner();
-      })
-      .catch((err) => { setStatus('idle'); });
-  };
+  // ──────────── USER ACTIONS ────────────
 
   const startSearch = () => {
+    if (isSearchingRef.current) return; // prevent double-click
+    isSearchingRef.current = true;
     setStep('chat');
     setStatus('searching');
+    setIsMuted(false);
 
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
         emitFindPartner();
       })
-      .catch((err) => { showNotification('Microphone access is required!'); setStep('landing'); });
+      .catch((err) => {
+        showNotification('Microphone access is required!');
+        setStep('landing');
+        isSearchingRef.current = false;
+      });
   };
 
-  const callUser = (partnerId) => {
-    if (!peerRef.current || !localStreamRef.current) {
-      return;
-    }
+  const handleStartCall = () => {
+    if (isSearchingRef.current) return; // prevent double-click
+    isSearchingRef.current = true;
+    setStatus('searching');
+    setIsMuted(false);
 
-    const call = peerRef.current.call(partnerId, localStreamRef.current);
-    callRef.current = call;
-    // Start timeout waiting for remote stream — retry with ICE restart before aborting
-    clearStreamTimeout();
-    streamTimeoutRef.current = setTimeout(() => {
-      // If we haven't retried yet, try once more with ICE restart
-      if (!callRetriedRef.current && peerRef.current && localStreamRef.current) {
-        callRetriedRef.current = true;
-        console.log('First call attempt timed out, retrying with ICE restart...');
-        try { call.close(); } catch (e) { }
-        // Re-call — PeerJS will negotiate fresh ICE candidates
-        callUser(partnerId);
-      } else {
-        abortAndSearch();
-      }
-    }, 5000);
-
-    call.on('stream', (remoteStream) => {
-
-      clearStreamTimeout();
-      if (remoteAudioRef.current) {
-        // Stop previous stream if any
-        if (remoteAudioRef.current.srcObject) {
-          remoteAudioRef.current.srcObject.getTracks().forEach(track => track.stop());
-        }
-
-        remoteAudioRef.current.srcObject = remoteStream;
-
-        // Ensure autoplay properties are set
-        remoteAudioRef.current.autoplay = true;
-        remoteAudioRef.current.muted = false;
-        remoteAudioRef.current.volume = 1;
-
-        // Play with error handling
-        const playPromise = remoteAudioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise.catch(() => { });
-        }
-
-        // Mark connection established when remote stream arrives
-        establishConnection();
-      }
-    });
-
-    call.on('error', (err) => {
-      console.log('Call error:', err);
-    });
-
-    call.on('close', () => {
-
-      clearStreamTimeout();
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.pause();
-        remoteAudioRef.current.srcObject = null;
-      }
-    });
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        localStreamRef.current = stream;
+        emitFindPartner();
+      })
+      .catch((err) => {
+        showNotification('Microphone access is required!');
+        setStatus('idle');
+        isSearchingRef.current = false;
+      });
   };
 
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsMuted(!audioTrack.enabled);
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMuted(!audioTrack.enabled);
+      }
     }
   };
 
   const handleSendMessage = (text) => {
+    if (!text.trim()) return;
     setMessages(prev => [...prev, { text, type: 'sent' }]);
     socketRef.current.emit('send_message', text);
   };
 
   const handleDisconnect = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    // Stop local stream
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-
-    // Notify server to disconnect partner
+    fullCleanup();
     socketRef.current.emit('disconnect_call');
-
     setStatus('idle');
-    setMessages([]);
-    setCallDuration(0);
-    setUnreadCount(0);
+    resetCallState();
+    isSearchingRef.current = false;
   };
 
-  const handleStartCall = () => {
+  const handleHome = () => {
+    fullCleanup();
+    socketRef.current.emit('disconnect_call');
+    setStep('landing');
+    setStatus('idle');
+    resetCallState();
+    isSearchingRef.current = false;
+  };
+
+  const handleSkip = () => {
+    fullCleanup();
+    socketRef.current.emit('disconnect_call');
+
+    resetCallState();
     setStatus('searching');
+    isSearchingRef.current = true;
+
+    // Immediately search for new partner
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
         emitFindPartner();
       })
-      .catch((err) => { showNotification('Microphone access is required!'); setStatus('idle'); });
-  };
-
-  const handleHome = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-    }
-
-    setStep('landing');
-    setStatus('idle');
-    setMessages([]);
-    setCallDuration(0);
-    setUnreadCount(0);
+      .catch((err) => {
+        showNotification('Microphone access is required!');
+        setStatus('idle');
+        isSearchingRef.current = false;
+      });
   };
 
   const toggleAutoReconnect = () => {
@@ -573,37 +632,6 @@ function AppContent() {
 
   const handleChatOpen = () => {
     setUnreadCount(0);
-  };
-
-  const handleSkip = () => {
-    // Stop timer
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    // Stop local stream
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-
-    // Notify server to disconnect partner
-    socketRef.current.emit('disconnect_call');
-
-    // Clear messages and reset state
-    setMessages([]);
-    setCallDuration(0);
-    setUnreadCount(0);
-    setStatus('searching');
-
-    // Immediately search for new partner
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        localStreamRef.current = stream;
-        emitFindPartner();
-      })
-      .catch((err) => { showNotification('Microphone access is required!'); setStatus('idle'); });
   };
 
   return (
