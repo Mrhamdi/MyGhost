@@ -523,13 +523,24 @@ function AppContent() {
       setPartnerMuted(isMuted);
     });
 
-    // Initialize PeerJS (Production)
+    // Initialize PeerJS (Production/Dev dynamic)
     const createPeer = () => {
+      let peerHost = 'localhost';
+      let peerPort = 3001;
+      let peerSecure = false;
+
+      if (import.meta.env.PROD) {
+        // Extract host from Render URL: 'https://server-tt1f.onrender.com' -> 'server-tt1f.onrender.com'
+        peerHost = SOCKET_URL.replace('https://', '').replace('http://', '').split(':')[0].split('/')[0];
+        peerPort = 443;
+        peerSecure = true;
+      }
+
       const peer = new Peer(undefined, {
-        host: 'localhost',
-        port: 3001,
+        host: peerHost,
+        port: peerPort,
         path: '/peerjs/myapp',
-        secure: false
+        secure: peerSecure
       });
 
       peer.on('open', (id) => {
