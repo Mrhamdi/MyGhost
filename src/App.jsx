@@ -100,20 +100,42 @@ function AppContent() {
   }, [preferences]);
 
   useEffect(() => {
-      fetch('https://ipwho.is/')
-          .then(res => res.json())
-          .then(data => {
-              if (data.success && data.country) {
-                  const cname = data.country;
-                  const cca2 = (data.country_code || '').toLowerCase();
-                  fetch('https://restcountries.com/v3.1/alpha/' + cca2)
-                      .then(r => r.json())
-                      .then(cData => {
-                          const flag = cData && cData[0] ? cData[0].flag : '';
-                          setPreferences(p => ({ ...p, ownCountry: cname, userFlag: flag, ownCountryCode: cca2 }));
-                      }).catch(() => setPreferences(p => ({ ...p, ownCountry: cname, ownCountryCode: cca2 })));
-              }
-          }).catch(err => console.error("IP Data error:", err));
+    const fetchGeo = async () => {
+      try {
+        // Try Service 1
+        const res = await fetch('https://ipwho.is/');
+        const data = await res.json();
+        if (data.success && data.country) {
+          return { cname: data.country, cca2: (data.country_code || '').toLowerCase() };
+        }
+        throw new Error('Service 1 failed');
+      } catch (err) {
+        try {
+          // Try Service 2 (Fallback)
+          const res = await fetch('https://freeipapi.com/api/json');
+          const data = await res.json();
+          if (data.countryName) {
+            return { cname: data.countryName, cca2: (data.countryCode || '').toLowerCase() };
+          }
+        } catch (e) {
+          console.error("All Geo services failed:", e);
+        }
+      }
+      return null;
+    };
+
+    fetchGeo().then(geo => {
+      if (geo) {
+        const { cname, cca2 } = geo;
+        fetch('https://restcountries.com/v3.1/alpha/' + cca2)
+          .then(r => r.json())
+          .then(cData => {
+            const flag = cData && cData[0] ? cData[0].flag : '';
+            setPreferences(p => ({ ...p, ownCountry: cname, userFlag: flag, ownCountryCode: cca2 }));
+          })
+          .catch(() => setPreferences(p => ({ ...p, ownCountry: cname, ownCountryCode: cca2 })));
+      }
+    });
   }, []);
 
   // Keep refs in sync with state
