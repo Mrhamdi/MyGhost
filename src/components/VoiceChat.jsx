@@ -209,11 +209,17 @@ const VoiceChat = ({
                         {[...Array(5)].map((_, i) => (
                             <div
                                 key={i}
-                                className="bar"
+                                className={`bar ${partnerMuted ? 'muted' : ''}`}
                                 style={{ animationDelay: `${i * 0.1}s` }}
                             ></div>
                         ))}
                     </div>
+                    {partnerMuted && (
+                        <div className="partner-muted-msg">
+                            <MicOff size={16} />
+                            <span>Partner muted</span>
+                        </div>
+                    )}
                     <p style={{ fontWeight: 'bold' }}>Connected with a stranger</p>
                     {partnerInfo && (partnerInfo.country || partnerInfo.gender) && (
                         <p className="partner-country" style={{ marginTop: '0.5rem', fontSize: '1.1rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -225,11 +231,7 @@ const VoiceChat = ({
                             )}
                         </p>
                     )}
-                    {partnerMuted && (
-                        <p className="partner-muted-notify" style={{ color: '#ef4444', fontSize: '0.9rem', fontWeight: '500', marginTop: '4px', animation: 'pulse 2s infinite' }}>
-                            🔇 Partner muted
-                        </p>
-                    )}
+
                     {callDuration > 0 && (
                         <div className="timer">{formatTime(callDuration)}</div>
                     )}

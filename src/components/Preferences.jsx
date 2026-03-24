@@ -151,10 +151,10 @@ const Preferences = ({ preferences, setPreferences, isOpen, onClose }) => {
                     onClick={onClose}
                     style={{
                         position: 'fixed', inset: 0,
-                        background: 'rgba(0,0,0,0.4)',
-                        backdropFilter: 'blur(4px)',
-                        zIndex: 200,
-                        animation: 'fadeIn 0.2s ease'
+                        background: 'rgba(0,0,0,0.5)',
+                        backdropFilter: 'blur(8px)',
+                        zIndex: 2000,
+                        animation: 'fadeIn 0.4s ease'
                     }}
                 />
             )}
@@ -163,28 +163,53 @@ const Preferences = ({ preferences, setPreferences, isOpen, onClose }) => {
             <aside style={{
                 position: 'fixed',
                 top: 0, right: 0,
-                width: 'min(380px, 95vw)',
+                width: 'min(400px, 95vw)',
                 height: '100vh',
-                background: 'var(--bg-color)',
+                background: 'var(--card-bg)',
+                backdropFilter: 'var(--glass-blur)',
                 borderLeft: '1px solid var(--card-border)',
-                boxShadow: '-8px 0 40px rgba(0,0,0,0.15)',
-                zIndex: 300,
+                boxShadow: '-10px 0 50px rgba(0,0,0,0.2)',
+                zIndex: 2100,
                 display: 'flex',
                 flexDirection: 'column',
                 transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-                transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                overflowY: 'auto'
+                transition: 'transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
+                overflowY: 'auto',
+                paddingTop: 'env(safe-area-inset-top)'
             }}>
                 {/* Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--card-border)' }}>
-                    <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>Match Settings</h2>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', display: 'flex', alignItems: 'center' }}>
-                        <X size={22} />
+                <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    padding: '2rem 1.5rem', 
+                    borderBottom: '1px solid var(--card-border)',
+                    background: 'rgba(0,0,0,0.02)'
+                }}>
+                    <h2 style={{ 
+                        margin: 0, 
+                        fontSize: '1.5rem', 
+                        fontWeight: 700, 
+                        fontFamily: 'var(--font-heading)',
+                        color: 'var(--text-primary)' 
+                    }}>Match Preferences</h2>
+                    <button onClick={onClose} style={{ 
+                        background: 'var(--card-hover)', 
+                        border: '1px solid var(--card-border)', 
+                        borderRadius: '12px',
+                        padding: '8px',
+                        cursor: 'pointer', 
+                        color: 'var(--text-primary)', 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        transition: 'var(--transition)'
+                    }}>
+                        <X size={20} />
                     </button>
                 </div>
 
                 {/* Body */}
-                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', flex: 1 }}>
+                <div style={{ padding: '2rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '2rem', flex: 1 }}>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                         <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>I am a</label>
