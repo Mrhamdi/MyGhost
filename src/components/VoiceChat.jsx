@@ -18,7 +18,10 @@ const VoiceChat = ({
     onlineUsers,
     onSkip,
     partnerInfo,
-    partnerMuted
+    partnerMuted,
+    isPartnerDisconnected,
+    theme,
+    onToggleTheme
 }) => {
     const [messageText, setMessageText] = useState('');
     const [showAnimation, setShowAnimation] = useState(false);
@@ -41,11 +44,11 @@ const VoiceChat = ({
     useEffect(() => {
         if (status === 'connected') {
             setShowAnimation(true);
-            setTimeout(() => setShowAnimation(false), 600);
+            const timer = setTimeout(() => setShowAnimation(false), 2000);
+            return () => clearTimeout(timer);
         }
     }, [status]);
 
-    // Dragging logic
     const handleMouseDown = (e) => {
         if (e.target.closest('.chat-input-container') || e.target.closest('button')) {
             return; // Don't drag when clicking input or buttons
@@ -116,7 +119,11 @@ const VoiceChat = ({
 
     return (
         <div className="container">
-            {/* Online Users Count removed as per user request (already in navbar) */}
+            {isPartnerDisconnected && (
+                <div className="disconnect-overlay">
+                    <div className="disconnect-msg">Stranger Left</div>
+                </div>
+            )}
 
             {status === 'connected' && (
                 <>
@@ -209,7 +216,7 @@ const VoiceChat = ({
                     </div>
                     <p style={{ fontWeight: 'bold' }}>Connected with a stranger</p>
                     {partnerInfo && (partnerInfo.country || partnerInfo.gender) && (
-                        <p className="partner-country" style={{ marginTop: '0.5rem', fontSize: '1.1rem', color: 'var(--text-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <p className="partner-country" style={{ marginTop: '0.5rem', fontSize: '1.1rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                             Stranger from {partnerInfo.country !== 'Unknown' ? partnerInfo.country : 'Unknown'}
                             {partnerInfo.countryCode ? (
                                 <span className={`fi fi-${partnerInfo.countryCode}`} style={{ borderRadius: '2px' }}></span>

@@ -27,8 +27,9 @@ function AppContent() {
   const [callDuration, setCallDuration] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [partnerInfo, setPartnerInfo] = useState(null); // Stores matched partner country and flag
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [partnerMuted, setPartnerMuted] = useState(false);
+  const [isPartnerDisconnected, setIsPartnerDisconnected] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Load auto-reconnect preference from localStorage
   const [autoReconnect, setAutoReconnect] = useState(() => {
@@ -218,6 +219,7 @@ function AppContent() {
     setUnreadCount(0);
     setIsMuted(false);
     setPartnerMuted(false);
+    setIsPartnerDisconnected(false);
   };
 
   // ──────────── CORE CONNECTION LOGIC ────────────
@@ -344,6 +346,17 @@ function AppContent() {
     call.on('close', () => {
       clearStreamTimeout();
       stopRemoteAudio();
+      if (stepRef.current === 'chat' && statusRef.current === 'connected') {
+        setIsPartnerDisconnected(true);
+        if (autoReconnectRef.current) {
+          setTimeout(() => {
+            if (stepRef.current === 'chat') handleSkip();
+          }, 1500);
+        } else {
+          setStep('landing');
+          resetCallState();
+        }
+      }
     });
   };
 
@@ -432,6 +445,7 @@ function AppContent() {
       setStatus('searching');
       resetCallState();
       setPartnerMuted(false);
+      setIsPartnerDisconnected(false);
       if (partnerCountry || partnerGender) {
         setPartnerInfo({ country: partnerCountry || 'Unknown', countryCode: partnerCountryCode || '', flag: partnerFlag || '', gender: partnerGender || 'Unknown' });
       }
@@ -498,29 +512,33 @@ function AppContent() {
     socketRef.current.on('peer_not_ready', () => { });
 
     socketRef.current.on('partner_disconnected', () => {
-      showNotification('Stranger disconnected');
-      fullCleanup();
-      setPartnerInfo(null);
+      if (stepRef.current === 'chat') {
+        setIsPartnerDisconnected(true);
+        fullCleanup();
+        setPartnerInfo(null);
 
-      if (autoReconnectRef.current && stepRef.current === 'chat') {
-        resetCallState();
-        setTimeout(() => {
-          setStatus('searching');
-          isSearchingRef.current = true;
-          navigator.mediaDevices.getUserMedia({ audio: true })
-            .then((stream) => {
-              localStreamRef.current = stream;
-              emitFindPartner();
-            })
-            .catch((err) => {
-              setStatus('idle');
-              isSearchingRef.current = false;
-            });
-        }, 1500);
-      } else {
-        setStatus('idle');
-        resetCallState();
-        isSearchingRef.current = false;
+        if (autoReconnectRef.current) {
+          resetCallState();
+          setTimeout(() => {
+            if (stepRef.current === 'chat') {
+              setStatus('searching');
+              isSearchingRef.current = true;
+              navigator.mediaDevices.getUserMedia({ audio: true })
+                .then((stream) => {
+                  localStreamRef.current = stream;
+                  emitFindPartner();
+                })
+                .catch((err) => {
+                  setStatus('idle');
+                  isSearchingRef.current = false;
+                });
+            }
+          }, 1500);
+        } else {
+          setStatus('idle');
+          resetCallState();
+          isSearchingRef.current = false;
+        }
       }
     });
 
@@ -593,6 +611,17 @@ function AppContent() {
           call.on('close', () => {
             clearStreamTimeout();
             stopRemoteAudio();
+            if (stepRef.current === 'chat' && statusRef.current === 'connected') {
+              setIsPartnerDisconnected(true);
+              if (autoReconnectRef.current) {
+                setTimeout(() => {
+                  if (stepRef.current === 'chat') handleSkip();
+                }, 1500);
+              } else {
+                setStep('landing');
+                resetCallState();
+              }
+            }
           });
         };
 
@@ -798,6 +827,9 @@ function AppContent() {
               onSkip={handleSkip}
               partnerInfo={partnerInfo}
               partnerMuted={partnerMuted}
+              isPartnerDisconnected={isPartnerDisconnected}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           )
         } />
