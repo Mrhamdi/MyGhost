@@ -102,21 +102,26 @@ function AppContent() {
   useEffect(() => {
     const fetchGeo = async () => {
       try {
-        // Step 1: Get the client's public IP directly (CORS-friendly)
-        const ipRes = await fetch('https://api.ipify.org?format=json');
-        const ipData = await ipRes.json();
-        const userIp = ipData.ip;
-
-        // Step 2: Use our backend proxy to get full data for that IP
-        const baseUrl = SOCKET_URL.endsWith('/') ? SOCKET_URL.slice(0, -1) : SOCKET_URL;
-        const res = await fetch(`${baseUrl}/api/geo?ip=${userIp}`);
+        // Method 1: Geolocation-DB (Very reliable for CORS/Mobile)
+        const res = await fetch('https://geolocation-db.com/json/');
         const data = await res.json();
-        
+        if (data && data.country_name) {
+          return { cname: data.country_name, cca2: (data.country_code || '').toLowerCase() };
+        }
+      } catch (err) {
+        console.warn("Geolocation-DB failed, trying backend proxy:", err);
+      }
+
+      try {
+        // Method 2: My Backend Proxy (Fallback)
+        const baseUrl = SOCKET_URL.endsWith('/') ? SOCKET_URL.slice(0, -1) : SOCKET_URL;
+        const res = await fetch(`${baseUrl}/api/geo`);
+        const data = await res.json();
         if (data.success && data.country) {
           return { cname: data.country, cca2: (data.country_code || '').toLowerCase() };
         }
       } catch (err) {
-        console.error("Bulletproof Geo failed:", err);
+        console.error("All Geo methods failed:", err);
       }
       return null;
     };
