@@ -111,8 +111,35 @@ const Preferences = ({ preferences, setPreferences, isOpen, onClose }) => {
         </div>
     );
 
-    const handlePrefChange = (selected) => setPreferences(prev => ({ ...prev, targetCountry: selected || [] }));
-    const handleBlockChange = (selected) => setPreferences(prev => ({ ...prev, blockedCountry: selected || [] }));
+    const handlePrefChange = (selected) => {
+        const selectedArr = selected || [];
+        // If a country is added to preferred, remove it from blocked
+        setPreferences(prev => {
+            const newBlocked = (prev.blockedCountry || []).filter(
+                b => !selectedArr.some(s => s.value === b.value)
+            );
+            return { 
+                ...prev, 
+                targetCountry: selectedArr,
+                blockedCountry: newBlocked
+            };
+        });
+    };
+
+    const handleBlockChange = (selected) => {
+        const selectedArr = selected || [];
+        // If a country is added to blocked, remove it from preferred
+        setPreferences(prev => {
+            const newTarget = (prev.targetCountry || []).filter(
+                t => !selectedArr.some(s => s.value === t.value)
+            );
+            return { 
+                ...prev, 
+                blockedCountry: selectedArr,
+                targetCountry: newTarget
+            };
+        });
+    };
     const handleUserGender = (selected) => setPreferences(prev => ({ ...prev, userGender: selected?.value || 'Male' }));
     const handleTargetGender = (selected) => setPreferences(prev => ({ ...prev, targetGender: selected?.value || 'Anyone' }));
 
