@@ -637,10 +637,6 @@ function AppContent() {
 
   // Initialize and start searching
   const startSearch = () => {
-    if (Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-
     if (isSearchingRef.current) return; // prevent double-click
     isSearchingRef.current = true;
     setStep('chat');
