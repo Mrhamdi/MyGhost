@@ -102,24 +102,14 @@ function AppContent() {
   useEffect(() => {
     const fetchGeo = async () => {
       try {
-        // Try Service 1
-        const res = await fetch('https://ipwho.is/');
+        // Fetch via our own backend proxy to bypass browser CORS
+        const res = await fetch(`${SOCKET_URL}/api/geo`);
         const data = await res.json();
         if (data.success && data.country) {
           return { cname: data.country, cca2: (data.country_code || '').toLowerCase() };
         }
-        throw new Error('Service 1 failed');
       } catch (err) {
-        try {
-          // Try Service 2 (Fallback)
-          const res = await fetch('https://freeipapi.com/api/json');
-          const data = await res.json();
-          if (data.countryName) {
-            return { cname: data.countryName, cca2: (data.countryCode || '').toLowerCase() };
-          }
-        } catch (e) {
-          console.error("All Geo services failed:", e);
-        }
+        console.error("Backend Geo Proxy failed:", err);
       }
       return null;
     };
@@ -136,7 +126,7 @@ function AppContent() {
           .catch(() => setPreferences(p => ({ ...p, ownCountry: cname, ownCountryCode: cca2 })));
       }
     });
-  }, []);
+  }, [SOCKET_URL]);
 
   // Keep refs in sync with state
   useEffect(() => { autoReconnectRef.current = autoReconnect; }, [autoReconnect]);
@@ -369,8 +359,11 @@ function AppContent() {
 
   // MOUNT-ONLY: initialize socket + PeerJS once
   useEffect(() => {
-    // Initialize Socket
-    socketRef.current = io(SOCKET_URL);
+    // Initialize Socket - force websocket to avoid polling 502/CORS issues
+    socketRef.current = io(SOCKET_URL, {
+      transports: ['websocket'],
+      upgrade: false
+    });
 
     socketRef.current.on('connect', () => {
       console.log('Socket connected:', socketRef.current.id);
