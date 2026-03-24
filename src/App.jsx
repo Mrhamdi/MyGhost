@@ -102,16 +102,21 @@ function AppContent() {
   useEffect(() => {
     const fetchGeo = async () => {
       try {
-        // Fetch via our own backend proxy to bypass browser CORS
-        // Safety: ensure no double slash
+        // Step 1: Get the client's public IP directly (CORS-friendly)
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        const userIp = ipData.ip;
+
+        // Step 2: Use our backend proxy to get full data for that IP
         const baseUrl = SOCKET_URL.endsWith('/') ? SOCKET_URL.slice(0, -1) : SOCKET_URL;
-        const res = await fetch(`${baseUrl}/api/geo`);
+        const res = await fetch(`${baseUrl}/api/geo?ip=${userIp}`);
         const data = await res.json();
+        
         if (data.success && data.country) {
           return { cname: data.country, cca2: (data.country_code || '').toLowerCase() };
         }
       } catch (err) {
-        console.error("Backend Geo Proxy failed:", err);
+        console.error("Bulletproof Geo failed:", err);
       }
       return null;
     };
