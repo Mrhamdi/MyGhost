@@ -14,7 +14,7 @@ import './App.css';
 //This for prod
 // SOCKET URL selection (Prod vs Dev)
 const SOCKET_URL = import.meta.env.PROD 
-  ? 'https://server-tt1f.onrender.com/' 
+  ? 'https://server-tt1f.onrender.com' 
   : 'http://localhost:3001';
 
 function AppContent() {
@@ -103,7 +103,9 @@ function AppContent() {
     const fetchGeo = async () => {
       try {
         // Fetch via our own backend proxy to bypass browser CORS
-        const res = await fetch(`${SOCKET_URL}/api/geo`);
+        // Safety: ensure no double slash
+        const baseUrl = SOCKET_URL.endsWith('/') ? SOCKET_URL.slice(0, -1) : SOCKET_URL;
+        const res = await fetch(`${baseUrl}/api/geo`);
         const data = await res.json();
         if (data.success && data.country) {
           return { cname: data.country, cca2: (data.country_code || '').toLowerCase() };
