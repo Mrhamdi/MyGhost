@@ -361,11 +361,8 @@ function AppContent() {
 
   // MOUNT-ONLY: initialize socket + PeerJS once
   useEffect(() => {
-    // Initialize Socket - force websocket to avoid polling 502/CORS issues
-    socketRef.current = io(SOCKET_URL, {
-      transports: ['websocket'],
-      upgrade: false
-    });
+    // Initialize Socket
+    socketRef.current = io(SOCKET_URL);
 
     socketRef.current.on('connect', () => {
       console.log('Socket connected:', socketRef.current.id);
